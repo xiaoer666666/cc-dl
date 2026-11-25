@@ -1,0 +1,85 @@
+name: fetch
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download official offline msix
+        run: |
+          set -e
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          URL="https://claude.ai/api/desktop/win32/x64/offline/latest/redirect"
+          HDRS=(-H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                -H "Accept-Language: en-US,en;q=0.9" \
+                -H "Referer: https://claude.ai/download" \
+                -H "sec-ch-ua: \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"" \
+                -H "sec-ch-ua-platform: \"Windows\"" \
+                -H "Upgrade-Insecure-Requests: 1")
+          echo "final url:"
+          curl -sS -o /dev/null -D - --max-time 60 -A "$UA" "${HDRS[@]}" "$URL" | grep -i "^location:" || true
+          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors --max-time 3600 \
+            -A "$UA" "${HDRS[@]}" -o offline.msix "$URL"
+          echo "size bytes: $(stat -c%s offline.msix)"
+          echo "size human: $(du -h offline.msix | cut -f1)"
+          sha256sum offline.msix | tee MANIFEST.txt
+          echo "file: offline.msix" >> MANIFEST.txt
+          echo "size_bytes: $(stat -c%s offline.msix)" >> MANIFEST.txt
+          echo "source_url: $URL" >> MANIFEST.txt
+          echo "runner_time_utc: $(date -u +%FT%TZ)" >> MANIFEST.txt
+          cat MANIFEST.txt
+
+      - name: Split if needed (release asset limit 2GB)
+        run: |
+          set -e
+          SZ=$(stat -c%s offline.msix)
+          LIMIT=$((1900*1024*1024))
+          if [ "$SZ" -gt "$LIMIT" ]; then
+            echo "larger than 1900MiB, splitting..."
+            split -b 1900M -d -a 2 offline.msix part-
+            ls -lh part-*
+            sha256sum part-* >> MANIFEST.txt
+          else
+            echo "under limit, no split"
+          fi
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="claude-offline-$(date -u +%Y%m%d-%H%M%S)"
+          echo "tag=$TAG" >> $GITHUB_ENV
+          RID=$(curl -sS -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/releases \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"Claude Desktop offline 6.28899.6\",\"body\":\"Official offline installer mirrored for CN users. See MANIFEST.txt for sha256.\"}" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          echo "release id: $RID"
+          echo "RID=$RID" >> $GITHUB_ENV
+
+          upload() {
+            f="$1"
+            name=$(basename "$f")
+            code=$(curl -sS -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" \
+              -o /tmp/up.json -w "%{http_code}" \
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/$RID/assets?name=$name")
+            echo "upload $name -> HTTP $code state=$(python3 -c "import json;d=json.load(open('/tmp/up.json'));print(d.get('state',d.get('message','')))")"
+          }
+
+          for f in MANIFEST.txt offline.msix part-*; do
+            if [ -f "$f" ]; then upload "$f"; fi
+          done
+          echo "=== release assets ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" \
+            https://api.github.com/repos/${{ github.repository }}/releases/$RID/assets \
+            | python3 -c "import sys,json;[print(a['name'], a['size'], a['browser_download_url']) for a in json.load(sys.stdin)]"
