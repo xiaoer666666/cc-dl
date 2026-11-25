@@ -1,0 +1,36 @@
+name: probe2
+on:
+  workflow_dispatch:
+
+jobs:
+  probe2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Inspect 403 body and download page
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          echo "########## 1) offline redirect with full browser headers ##########"
+          curl -sS -D /tmp/h1.txt -o /tmp/b1.html --max-time 60 -A "$UA" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            -H "Accept-Language: en-US,en;q=0.9" \
+            -H "Referer: https://claude.ai/download" \
+            -H "sec-ch-ua: \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"" \
+            -H "sec-ch-ua-platform: \"Windows\"" \
+            -H "Upgrade-Insecure-Requests: 1" \
+            "https://claude.ai/api/desktop/win32/x64/offline/latest/redirect" || true
+          grep -iE "^HTTP/|^location:|^cf-|^server:|^x-" /tmp/h1.txt | head -20 || true
+          echo "----- body (first 1200 chars) -----"
+          head -c 1200 /tmp/b1.html || true
+          echo
+          echo "########## 2) plain exe redirect ##########"
+          curl -sS -D /tmp/h2.txt -o /tmp/b2.html --max-time 60 -A "$UA" "https://claude.ai/api/desktop/win32/x64/exe/latest/redirect" || true
+          grep -iE "^HTTP/|^location:" /tmp/h2.txt | head -10 || true
+          head -c 300 /tmp/b2.html || true
+          echo
+          echo "########## 3) download page links ##########"
+          curl -sSL --max-time 60 -A "$UA" "https://claude.ai/download" -o /tmp/dl.html || true
+          echo "page size: $(wc -c < /tmp/dl.html)"
+          grep -oiE "https?://[^\"'< ]*(msix|\.exe|desktop|downloads\.claude\.ai)[^\"'< ]*" /tmp/dl.html | sort -u | head -40 || true
+          echo "########## 4) api endpoints on page ##########"
+          grep -oiE "/api/desktop[^\"'< ]*" /tmp/dl.html | sort -u | head -20 || true
