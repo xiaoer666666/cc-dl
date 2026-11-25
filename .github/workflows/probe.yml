@@ -1,0 +1,23 @@
+name: probe
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Runner location
+        run: |
+          echo "=== runner ip ==="
+          curl -s --max-time 20 https://ipinfo.io/json || true
+          echo
+      - name: Probe claude offline url
+        run: |
+          URL="https://claude.ai/api/desktop/win32/x64/offline/latest/redirect"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          echo "=== HEAD / redirect chain ==="
+          curl -sSL -D - -o /dev/null --max-time 90 -A "$UA" "$URL" 2>&1 | grep -iE "^HTTP/|^location:|^content-length:|^content-type:|region|error" || true
+          echo "=== range 200MiB speed test ==="
+          curl -sSL -o /dev/null -w "code=%{http_code} downloaded=%{size_download} effective=%{url_effective} speed_Bps=%{speed_download}\n" \
+            --max-time 1200 -r 0-209715199 -A "$UA" "$URL" || true
