@@ -1,0 +1,26 @@
+name: probe3
+on:
+  workflow_dispatch:
+
+jobs:
+  probe3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Head and speed test offline msix
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          URL="https://claude.ai/api/desktop/win32/x64/offline/latest/redirect"
+          HDRS=(-H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+                -H "Accept-Language: en-US,en;q=0.9" \
+                -H "Referer: https://claude.ai/download" \
+                -H "sec-ch-ua: \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"" \
+                -H "sec-ch-ua-platform: \"Windows\"" \
+                -H "Upgrade-Insecure-Requests: 1")
+          echo "=== HEAD final file ==="
+          curl -sSIL --max-time 90 -A "$UA" "${HDRS[@]}" "$URL" 2>&1 | grep -iE "^HTTP/|^content-length:|^content-type:|^etag:|^last-modified:|^location:" | head -20 || true
+          echo "=== 300MiB range speed ==="
+          curl -sSL -o /dev/null -w "code=%{http_code} size=%{size_download} speed_MBps=%{speed_download}\n" \
+            --max-time 600 -r 0-314572799 -A "$UA" "${HDRS[@]}" "$URL" 2>&1 || true
+          echo "=== disk ==="
+          df -h / | tail -1
